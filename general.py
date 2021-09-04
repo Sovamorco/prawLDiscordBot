@@ -1,7 +1,7 @@
 from credentials import brawlhalla_api_key, steam_api_key
 from discord.ext.commands import Bot, when_mentioned_or
 
-from brawlhalla import BrawlhallaAPI, SteamAPI
+from brawlhalla import *
 from utils import all_casings
 
 prawl = Bot(when_mentioned_or(*all_casings('prr ')), case_insensitive=True)

@@ -4,8 +4,24 @@ from math import floor, log10
 import aiohttp
 import regex as re
 from discord import Embed
+from discord.ext.commands import CommandInvokeError
 
 from utils import agree_with_word
+
+
+class InvalidURLError(CommandInvokeError):
+    def __init__(self):
+        super().__init__('Invalid Steam profile URL')
+
+
+class RateLimitError(CommandInvokeError):
+    def __init__(self):
+        super().__init__('Rate limit hit for api key. Try again later')
+
+
+class APIError(CommandInvokeError):
+    def __init__(self):
+        super().__init__('API returned an error code. Try again later')
 
 
 class SteamAPI:
@@ -18,14 +34,12 @@ class SteamAPI:
     async def url_to_steam_id(self, url):
         matches = re.match(self.STEAM_URL_REGEX, url)
         if not matches:
-            if url.isdigit() and len(url) == 17:
-                return int(url)
-            return await self.resolve_vanity_url(url)
+            return None
         if steam_id := matches.group(2):
             return int(steam_id)
         if vanity_url := matches.group(1):
             return await self.resolve_vanity_url(vanity_url)
-        return None
+        raise InvalidURLError  # Should be impossible to reach actually
 
     async def resolve_vanity_url(self, vanity_url):
         async with self.session.get('https://api.steampowered.com/ISteamUser/ResolveVanityURL/v0001/',
@@ -34,9 +48,9 @@ class SteamAPI:
                                         'vanityurl': vanity_url
                                     }) as response:
             res = await response.json()
-        if res.get('response', {}).get('success'):
+        if res.get('response', {}).get('success') == 1:
             return res.get('response').get('steamid')
-        return None
+        raise InvalidURLError
 
 
 class BrawlhallaAPI:
@@ -47,6 +61,10 @@ class BrawlhallaAPI:
     async def request(self, method, **kwargs):
         kwargs.update(api_key=self.api_key)
         async with self.session.get(f'https://api.brawlhalla.com/{method}', params=kwargs) as response:
+            if response.status == 429:
+                raise RateLimitError
+            elif response.status != 200:
+                raise APIError
             return await response.json()
 
     async def search(self, steam_id):
@@ -54,6 +72,10 @@ class BrawlhallaAPI:
         if not res:
             return None
         return res.get('brawlhalla_id')
+
+    async def search_name(self, name) -> list['Ranking']:
+        res = await self.request('rankings/1v1/all/1', name=name)
+        return [Ranking(player) for player in res]
 
     async def player_stats(self, bhid):
         return await self.request(f'player/{bhid}/stats')
@@ -191,3 +213,15 @@ class RankedData:
                 tvtvalue += f'\n**Global rank: {mpt.global_rank}**'
         embed.add_field(name='2v2 (most played team)', value=tvtvalue)
         return embed
+
+
+class Ranking:
+    name: str
+    brawlhalla_id: int
+    region: str
+    rating: int
+    tier: str
+
+    def __init__(self, data):
+        for key in data:
+            setattr(self, key, data[key])
